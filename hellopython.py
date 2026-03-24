@@ -1,86 +1,68 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-# --- CẤU HÌNH ---
-SHEET_ID = "1UPyO04wZlOtHEIIGN_KHK11I6CslAI0pG2aH6CFECmA"
-# Nhấn nút 'Gửi' trong Google Form, chọn biểu tượng Link để lấy link này
-LINK_FORM_GUI = "https://docs.google.com/forms/d/e/XXXXX/viewform" 
+st.set_page_config(page_title="Hệ thống Văn bản Tự động", layout="wide")
 
-def load_data(sheet_name):
-    # Dùng link export CSV là cách nhanh nhất và không cần quyền bảo mật cao
-    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&sheet={sheet_name}"
-    try:
-        # Thêm timestamp để ép Google cập nhật dữ liệu mới liên tục
-        return pd.read_csv(url + f"&cache={datetime.now().timestamp()}")
-    except:
-        return pd.DataFrame()
+# --- KẾT NỐI TRỰC TIẾP ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-st.set_page_config(page_title="Hệ thống Văn bản Nội bộ", layout="wide")
+def load_data(s_name):
+    return conn.read(worksheet=s_name, ttl=0) # ttl=0 để luôn lấy dữ liệu mới nhất
 
-if 'logged_in' not in st.session_state: 
-    st.session_state.logged_in = False
+if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 
-# --- MÀN HÌNH ĐĂNG NHẬP ---
+# --- ĐĂNG NHẬP ---
 if not st.session_state.logged_in:
-    st.title("🔐 ĐĂNG NHẬP HỆ THỐNG")
-    u = st.text_input("Tên đăng nhập (username)")
-    p = st.text_input("Mật khẩu", type="password")
-    
-    if st.button("Xác nhận đăng nhập"):
+    st.title("🔐 ĐĂNG NHẬP TỰ ĐỘNG")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
+    if st.button("Xác nhận"):
         df_u = load_data("users")
-        if not df_u.empty:
-            # Lọc tài khoản
-            user = df_u[(df_u['username'].astype(str) == u) & (df_u['password'].astype(str) == p)]
-            if not user.empty:
-                st.session_state.logged_in = True
-                st.session_state.user_name = user.iloc[0]['fullname']
-                st.session_state.user_id = u
-                st.rerun()
-            else:
-                st.error("Sai tài khoản hoặc mật khẩu!")
-        else:
-            st.error("⚠️ Lỗi: Không tìm thấy sheet 'users' hoặc file chưa được chia sẻ công khai.")
+        user = df_u[(df_u['username'].astype(str) == u) & (df_u['password'].astype(str) == p)]
+        if not user.empty:
+            st.session_state.logged_in = True
+            st.session_state.user_id = u
+            st.session_state.user_name = user.iloc[0]['fullname']
+            st.rerun()
+        else: st.error("Sai tài khoản!")
 
-# --- SAU KHI ĐĂNG NHẬP ---
+# --- GIAO DIỆN CHÍNH ---
 else:
     st.sidebar.title(f"👤 {st.session_state.user_name}")
-    menu = st.sidebar.radio("CHỨC NĂNG", ["📥 Hộp thư ĐẾN", "📤 GỬI VĂN BẢN MỚI"])
-    
-    if st.sidebar.button("Thoát"):
-        st.session_state.logged_in = False
-        st.rerun()
+    menu = st.sidebar.radio("CHỨC NĂNG", ["📥 Hộp thư ĐẾN", "📤 Gửi văn bản MỚI"])
 
-    # --- CHỨC NĂNG HỘP THƯ ĐẾN ---
     if menu == "📥 Hộp thư ĐẾN":
-        st.header(f"📥 Văn bản dành riêng cho {st.session_state.user_name}")
+        st.header("📥 Văn bản gửi cho bạn")
         df_in = load_data("docs_in")
-        
-        if not df_in.empty:
-            # LƯU Ý: Tên cột 'Người nhận' phải khớp chính xác với câu hỏi trong Google Form
-            # Ở đây mình lọc theo username (user_id) để đảm bảo tính riêng tư
-            if 'Người nhận' in df_in.columns:
-                df_mine = df_in[df_in['Người nhận'].astype(str) == st.session_state.user_id]
-                if not df_mine.empty:
-                    st.dataframe(df_mine, use_container_width=True)
-                else:
-                    st.info("Hộp thư của bạn hiện đang trống.")
-            else:
-                st.warning("Hệ thống chưa tìm thấy cột 'Người nhận' trong dữ liệu.")
-        else:
-            st.write("Chưa có dữ liệu văn bản.")
+        # Lọc đúng người nhận là mình
+        df_mine = df_in[df_in['receiver'].astype(str) == st.session_state.user_id]
+        st.dataframe(df_mine, use_container_width=True)
 
-    # --- CHỨC NĂNG GỬI VĂN BẢN ---
-    elif menu == "📤 GỬI VĂN BẢN MỚI":
-        st.header("📤 Soạn thảo văn bản gửi đi")
-        st.info("Nhấn nút dưới đây để gửi văn bản. Dữ liệu sẽ tự động chuyển đến đúng người nhận.")
-        
-        # Nút bấm mở Form gửi
-        st.link_button("👉 MỞ FORM SOẠN VĂN BẢN", LINK_FORM_GUI)
-        
-        st.divider()
-        st.subheader("📂 Nhật ký văn bản bạn đã gửi")
-        df_all = load_data("docs_in")
-        if not df_all.empty and 'Người gửi' in df_all.columns:
-            df_sent = df_all[df_all['Người gửi'].astype(str) == st.session_state.user_id]
-            st.dataframe(df_sent, use_container_width=True)
+    elif menu == "📤 Gửi văn bản MỚI":
+        st.header("📤 Soạn và Gửi tự động")
+        df_u = load_data("users")
+        list_users = df_u['username'].tolist()
+
+        with st.form("auto_send_form"):
+            target = st.selectbox("Người nhận", list_users)
+            so_h = st.text_input("Số hiệu")
+            noi_dung = st.text_area("Nội dung")
+            
+            if st.form_submit_button("🚀 GỬI NGAY"):
+                # 1. Lấy dữ liệu hiện tại
+                curr_df = load_data("docs_in")
+                # 2. Tạo dòng mới
+                new_data = pd.DataFrame([{
+                    "so_hieu": so_h,
+                    "ngay_den": datetime.now().strftime("%d/%m/%Y"),
+                    "noi_gui": st.session_state.user_name,
+                    "noi_dung": noi_dung,
+                    "sender": st.session_state.user_id,
+                    "receiver": target
+                }])
+                # 3. TỰ ĐỘNG GHI VÀO SHEETS
+                updated_df = pd.concat([curr_df, new_data], ignore_index=True)
+                conn.update(worksheet="docs_in", data=updated_df)
+                st.success(f"✅ Đã gửi và lưu tự động vào Sheets cho {target}!")
