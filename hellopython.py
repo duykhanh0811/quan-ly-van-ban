@@ -33,4 +33,47 @@ if not st.session_state.logged_in:
         if st.button("Xác nhận đăng nhập"):
             df_users = load_data(LINK_USERS)
             if not df_users.empty:
-                # Kiểm tra tài khoản (ép kiểu về string để so sánh
+                # Kiểm tra tài khoản (ép kiểu về string để so sánh chính xác)
+                user = df_users[(df_users['username'].astype(str) == u) & (df_users['password'].astype(str) == p)]
+                if not user.empty:
+                    st.session_state.logged_in = True
+                    st.session_state.user_name = user.iloc[0]['fullname']
+                    st.rerun()
+                else:
+                    st.error("Sai tài khoản hoặc mật khẩu!")
+            else:
+                st.error("Không thể kết nối dữ liệu người dùng!")
+    
+    with col_r:
+        st.info("📢 Hướng dẫn: Quản trị viên cần nhập tài khoản vào Sheet 'users' trước khi đăng nhập tại đây.")
+
+# --- MÀN HÌNH CHÍNH ---
+else:
+    st.sidebar.title("MENU")
+    st.sidebar.write(f"👤 Người dùng: **{st.session_state.user_name}**")
+    
+    menu = st.sidebar.radio("Chọn chức năng", ["🏠 Trang chủ", "📥 Văn bản ĐẾN", "📤 Văn bản ĐI"])
+    
+    if st.sidebar.button("Đăng xuất"):
+        st.session_state.logged_in = False
+        st.rerun()
+
+    if menu == "🏠 Trang chủ":
+        st.header("Chào mừng bạn đến với hệ thống quản lý văn bản chung")
+        st.write("Dữ liệu đang được đồng bộ trực tuyến với Google Sheets.")
+        
+    elif menu == "📥 Văn bản ĐẾN":
+        st.header("📥 Danh sách Văn bản Đến")
+        df_in = load_data(LINK_IN)
+        if not df_in.empty:
+            st.dataframe(df_in, use_container_width=True)
+        else:
+            st.warning("Chưa có dữ liệu văn bản đến.")
+
+    elif menu == "📤 Văn bản ĐI":
+        st.header("📤 Danh sách Văn bản Đi")
+        df_out = load_data(LINK_OUT)
+        if not df_out.empty:
+            st.dataframe(df_out, use_container_width=True)
+        else:
+            st.warning("Chưa có dữ liệu văn bản đi.")
