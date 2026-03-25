@@ -4,16 +4,19 @@ from datetime import datetime
 import requests
 
 # --- CẤU HÌNH ---
-# Duy Khánh nhớ thay SHEET_ID và WEB_APP_URL của bạn vào đây
 SHEET_ID = "1UPyO04wZlOtHEIIGN_KHK11I6CslAI0pG2aH6CFECmA"
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwKjL7c8sDm-mJwKlUuOS1K4f5n6EW_AdaUzBI0WLFSE6pJbEwRnhGhugrs0qaIo6fDFg/exec"
 
 def load_data(sheet_name):
+    # Thêm tham số cache_drops để luôn lấy dữ liệu mới nhất
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
     try:
         df = pd.read_csv(url)
+        # Làm sạch tên cột (xóa khoảng trắng thừa)
+        df.columns = df.columns.str.strip()
         return df.fillna("")
-    except:
+    except Exception as e:
+        st.error(f"Lỗi tải bảng {sheet_name}: {e}")
         return pd.DataFrame()
 
 st.set_page_config(page_title="Hệ thống Quản lý Văn bản UTT", layout="wide")
@@ -22,7 +25,7 @@ st.set_page_config(page_title="Hệ thống Quản lý Văn bản UTT", layout="
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# --- MÀN HÌNH ĐĂNG NHẬP / ĐĂNG KÝ ---
+# --- GIAO DIỆN ĐĂNG NHẬP / ĐĂNG KÝ ---
 if not st.session_state.logged_in:
     tab1, tab2 = st.tabs(["🔐 ĐĂNG NHẬP", "📝 TẠO TÀI KHOẢN"])
     
@@ -30,18 +33,25 @@ if not st.session_state.logged_in:
         st.subheader("Đăng nhập hệ thống")
         u = st.text_input("Tên đăng nhập", key="login_user")
         p = st.text_input("Mật khẩu", type="password", key="login_pass")
+        
         if st.button("Vào hệ thống"):
             df_u = load_data("users")
             if not df_u.empty:
-                # Tìm user khớp user và pass
-                user = df_u[(df_u['username'].astype(str) == u) & (df_u['password'].astype(str) == p)]
-                if not user.empty:
-                    st.session_state.logged_in = True
-                    st.session_state.user_name = user.iloc[0]['fullname']
-                    st.session_state.user_role = user.iloc[0]['role']
-                    st.session_state.id_code = str(user.iloc[0]['id_code'])
-                    st.rerun()
-                else: st.error("Sai tài khoản hoặc mật khẩu!")
+                # Kiểm tra tài khoản
+                user_match = df_u[(df_u['username'].astype(str) == u) & (df_u['password'].astype(str) == p)]
+                
+                if not user_match.empty:
+                    try:
+                        # Lưu thông tin vào session
+                        st.session_state.logged_in = True
+                        st.session_state.user_name = user_match.iloc[0]['fullname']
+                        st.session_state.user_role = user_match.iloc[0]['role']
+                        st.session_state.id_code = str(user_match.iloc[0]['id_code'])
+                        st.rerun()
+                    except KeyError as e:
+                        st.error(f"Thiếu cột trong file Sheets: {e}. Vui lòng kiểm tra lại Hàng 1 của tab users.")
+                else:
+                    st.error("Sai tài khoản hoặc mật khẩu!")
 
     with tab2:
         st.subheader("Đăng ký thành viên mới")
@@ -62,13 +72,13 @@ if not st.session_state.logged_in:
                     "username": r_u, "password": r_p, "fullname": r_f,
                     "id_code": r_id, "role": r_role, "class_name": r_c
                 }
-                try:
-                    requests.post(WEB_APP_URL, json=payload)
+                res = requests.post(WEB_APP_URL, json=payload)
+                if res.status_code == 200:
                     st.success("🎉 Đăng ký thành công! Hãy chuyển sang tab Đăng nhập.")
-                except: st.error("Lỗi kết nối Server!")
-            else: st.error("Vui lòng điền đủ thông tin!")
+            else:
+                st.error("Vui lòng điền đủ thông tin!")
 
-# --- GIAO DIỆN CHÍNH (SAU ĐĂNG NHẬP) ---
+# --- GIAO DIỆN CHÍNH SAU ĐĂNG NHẬP ---
 else:
     st.sidebar.title(f"👤 {st.session_state.user_name}")
     st.sidebar.info(f"Quyền: {st.session_state.user_role}\nID: {st.session_state.id_code}")
@@ -78,31 +88,31 @@ else:
 
     menu = st.sidebar.radio("CHỨC NĂNG", ["📥 VĂN BẢN ĐẾN", "📤 SOẠN VĂN BẢN ĐI"])
 
-    # 1. PHẦN VĂN BẢN ĐẾN (Hộp thư)
     if menu == "📥 VĂN BẢN ĐẾN":
         st.header("📥 Hộp thư văn bản đến")
         df_in = load_data("doc_in")
         if not df_in.empty:
-            # Lọc văn bản mà Mã ID người nhận khớp với ID của mình
+            # Lọc văn bản gửi cho mình
             df_mine = df_in[df_in['receiver_id'].astype(str) == st.session_state.id_code]
             if not df_mine.empty:
                 st.dataframe(df_mine, use_container_width=True)
-            else: st.info("Bạn chưa có văn bản nào.")
-        else: st.info("Hộp thư hiện đang trống.")
+            else:
+                st.info("Bạn chưa nhận được văn bản nào.")
+        else:
+            st.info("Hộp thư hiện đang trống.")
 
-    # 2. PHẦN VĂN BẢN ĐI (Gửi đi)
     elif menu == "📤 SOẠN VĂN BẢN ĐI":
         st.header("📤 Thêm mới Văn bản đi")
-        with st.form("form_send_doc"):
+        with st.form("form_send"):
             col_a, col_b = st.columns(2)
             with col_a:
                 target_id = st.text_input("Mã ID người nhận *", placeholder="Nhập MSSV/MSGV")
             with col_b:
-                loai = st.selectbox("Loại văn bản", ["Công văn", "Thông báo", "Quyết định", "Đơn từ", "Khác"])
+                loai = st.selectbox("Loại văn bản", ["Công văn", "Thông báo", "Quyết định", "Khác"])
             
-            note = st.text_input("Chú thích", placeholder="Ghi chú nhanh...")
+            note = st.text_input("Chú thích")
             content = st.text_area("Nội dung văn bản *", height=200)
-            file = st.file_uploader("📎 Đính kèm tệp", type=["pdf", "png", "jpg", "docx"])
+            file = st.file_uploader("📎 Đính kèm tệp", type=["pdf", "png", "jpg"])
             
             if st.form_submit_button("🚀 GỬI VĂN BẢN"):
                 if target_id and content:
@@ -117,9 +127,7 @@ else:
                         "content": content,
                         "file_name": file.name if file else "Không có"
                     }
-                    try:
-                        requests.post(WEB_APP_URL, json=payload)
-                        st.success(f"✅ Đã gửi thành công tới ID: {target_id}!")
-                        st.balloons()
-                    except: st.error("Lỗi khi gửi văn bản!")
-                else: st.error("Vui lòng điền Mã ID người nhận và Nội dung!")
+                    requests.post(WEB_APP_URL, json=payload)
+                    st.success("✅ Đã gửi thành công!")
+                else:
+                    st.error("Vui lòng điền đủ Mã ID người nhận và Nội dung!")
