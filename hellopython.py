@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import requests
+import base64 # Thư viện để mã hóa file
 
 # --- CẤU HÌNH ---
 SHEET_ID = "1UPyO04wZlOtHEIIGN_KHK11I6CslAI0pG2aH6CFECmA"
@@ -74,9 +75,9 @@ else:
                     column_config={
                         "file_name": st.column_config.LinkColumn(
                             "Tệp đính kèm",
-                            help="Nhấn để mở file",
+                            help="Nhấn để mở file trên Google Drive",
                             validate="^http", # Chỉ kích hoạt nếu là link http
-                            display_text="Xem file" # Hiện chữ 'Xem file' thay vì link dài
+                            display_text="Xem file Drive" # Hiện chữ 'Xem file Drive' thay vì link dài
                         ),
                     },
                     hide_index=True,
@@ -90,11 +91,14 @@ else:
         st.header("📤 Soạn thảo văn bản đi")
         with st.form("form_send"):
             target_id = st.text_input("Mã ID người nhận *").strip().upper()
+            loai = st.selectbox("Loại văn bản", ["Thông báo", "Công văn", "Đơn từ", "Khác"])
+            note = st.text_input("Chú thích")
             content = st.text_area("Nội dung *")
-            # Ở phiên bản này, bạn hãy dán Link Drive của file vào đây thay vì tải file lên trực tiếp
-            file_url = st.text_input("Dán link file đính kèm (Google Drive/Image Link)", placeholder="https://drive.google.com/...")
             
-            if st.form_submit_button("🚀 GỬI"):
+            # GIỮ NGUYÊN st.file_uploader
+            uploaded_file = st.file_uploader("📎 Đính kèm tệp từ máy", type=["pdf", "png", "jpg", "docx", "zip"])
+            
+            if st.form_submit_button("🚀 GỬI VĂN BẢN"):
                 if target_id and content:
                     payload = {
                         "type": "send_dual",
@@ -102,8 +106,37 @@ else:
                         "sender_name": st.session_state.user_name,
                         "sender_id": st.session_state.id_code,
                         "receiver_id": target_id,
-                        "doc_type": "Văn bản", "note": "", "content": content,
-                        "file_name": file_url if file_url else "Không có" # Lưu Link thay vì tên file
+                        "doc_type": loai, 
+                        "note": note, 
+                        "content": content,
+                        "file_name": "Không có", # Giá trị mặc định
+                        "file_data": None,       # Dữ liệu file mã hóa
+                        "file_type": None        # Loại file (PDF, PNG...)
                     }
-                    requests.post(WEB_APP_URL, json=payload)
-                    st.success(f"Đã gửi thành công!")
+                    
+                    # NẾU CÓ FILE, TIẾN HÀNH MÃ HÓA BASE64 ĐỂ GỬI ĐI
+                    if uploaded_file is not None:
+                        try:
+                            # Mã hóa file thành Base64
+                            file_bytes = uploaded_file.read()
+                            encoded_string = base64.b64encode(file_bytes).decode('utf-8')
+                            
+                            # Cập nhật payload với thông tin file thật
+                            payload["file_name"] = uploaded_file.name
+                            payload["file_data"] = encoded_string
+                            payload["file_type"] = uploaded_file.type
+                            
+                        except Exception as fileError:
+                            st.error(f"Lỗi xử lý file: {fileError}")
+                            st.stop() # Dừng lại không gửi tiếp
+                    
+                    # Gửi dữ liệu sang Google Apps Script
+                    try:
+                        with st.spinner('Đang tải file lên Drive và gửi văn bản...'):
+                            response = requests.post(WEB_APP_URL, json=payload)
+                        if response.status_code == 200:
+                            st.success(f"Đã gửi thành công tới ID: {target_id}")
+                            st.balloons()
+                        else: st.error("Lỗi kết nối Server Apps Script!")
+                    except Exception as e: st.error(f"Lỗi: {e}")
+                else: st.error("Vui lòng điền đủ thông tin!")
