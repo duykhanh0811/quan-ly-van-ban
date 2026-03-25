@@ -32,47 +32,62 @@ if not st.session_state.logged_in:
         if not user_match.empty:
             st.session_state.logged_in = True
             st.session_state.user_name = user_match.iloc[0]['fullname']
+            st.session_state.user_role = user_match.iloc[0]['role'] # Lấy vai trò (Sinh viên/Giáo viên...)
             st.session_state.id_code = str(user_match.iloc[0]['id_code']).strip().upper()
             st.rerun()
         else: st.error("Sai tài khoản!")
 else:
     # --- GIAO DIỆN CHÍNH ---
     st.sidebar.title(f"👤 {st.session_state.user_name}")
-    st.sidebar.write(f"ID: {st.session_state.id_code}")
+    st.sidebar.info(f"Vai trò: {st.session_state.user_role}")
     menu = st.sidebar.radio("CHỨC NĂNG", ["📥 VĂN BẢN ĐẾN", "📤 SOẠN VĂN BẢN ĐI"])
 
     if menu == "📥 VĂN BẢN ĐẾN":
-        st.header("📥 Danh sách văn bản gửi cho bạn")
+        st.header("📥 Hộp thư văn bản đến")
         df_in = load_data("doc_in")
         if not df_in.empty:
-            # Lọc văn bản gửi đúng cho ID của bạn
             df_mine = df_in[df_in['receiver_id'].astype(str).str.upper() == st.session_state.id_code].copy()
-            
             if not df_mine.empty:
-                st.info(f"Bạn có {len(df_mine)} văn bản. Bấm vào để xem và mở file.")
                 for i, row in df_mine.iterrows():
-                    # Tạo hộp bấm để xem nội dung
-                    with st.expander(f"✉️ Thư từ: {row['sender_name']} ({row['date_sent']})"):
+                    with st.expander(f"✉️ Từ: {row['sender_name']} ({row['date_sent']})"):
                         st.write(f"**Nội dung:** {row['content']}")
-                        
-                        # KIỂM TRA VÀ TẠO NÚT MỞ FILE
                         link_file = str(row['file_name']).strip()
                         if link_file.startswith("http"):
-                            st.link_button("📂 NHẤN ĐỂ MỞ FILE ĐÍNH KÈM", link_file)
-                        else:
-                            st.warning("Văn bản này không có tệp đính kèm hoặc lỗi link.")
-            else: st.info("Hộp thư trống.")
-        else: st.info("Hệ thống chưa có dữ liệu.")
+                            st.link_button("📂 MỞ TỆP ĐÍNH KÈM", link_file)
+            else: st.info("Không có văn bản nào.")
 
     elif menu == "📤 SOẠN VĂN BẢN ĐI":
-        st.header("📤 Gửi văn bản mới")
-        with st.form("send_form", clear_on_submit=True):
-            receiver = st.text_input("ID người nhận (Ví dụ: 75DCTT21381)").strip().upper()
-            msg = st.text_area("Nội dung")
-            up_file = st.file_uploader("Đính kèm tệp từ máy")
+        st.header("📤 Soạn thảo văn bản")
+        df_all_users = load_data("users")
+        
+        # --- LOGIC PHÂN QUYỀN GỬI ---
+        # 1. Nếu là Sinh viên: Chỉ hiện danh sách Giáo viên và Nhà trường
+        if st.session_state.user_role == "Sinh viên":
+            allowed_users = df_all_users[df_all_users['role'].isin(["Giáo viên", "Nhà trường"])]
+            st.warning("💡 Bạn đang gửi văn bản với tư cách Sinh viên (Chỉ gửi cho GV/Nhà trường)")
             
-            if st.form_submit_button("🚀 Gửi"):
-                if receiver and msg:
+        # 2. Nếu là Nhà trường: Hiện danh sách Giáo viên và Sinh viên
+        elif st.session_state.user_role == "Nhà trường":
+            allowed_users = df_all_users[df_all_users['role'].isin(["Giáo viên", "Sinh viên"])]
+            st.success("💡 Bạn đang gửi văn bản với tư cách Ban Quản lý/Nhà trường")
+            
+        # 3. Nếu là Giáo viên: Cho phép gửi cho cả Sinh viên và Nhà trường
+        else:
+            allowed_users = df_all_users[df_all_users['role'] != "Giáo viên"]
+            
+        # Tạo danh sách chọn người nhận (Tên - ID)
+        user_list = [f"{row['fullname']} ({row['id_code']})" for i, row in allowed_users.iterrows()]
+        
+        with st.form("send_form", clear_on_submit=True):
+            selected_receiver = st.selectbox("Chọn người nhận *", options=user_list)
+            msg = st.text_area("Nội dung văn bản *")
+            up_file = st.file_uploader("Đính kèm tệp")
+            
+            if st.form_submit_button("🚀 GỬI VĂN BẢN"):
+                if selected_receiver and msg:
+                    # Tách lấy mã ID từ chuỗi "Tên (ID)"
+                    target_id = selected_receiver.split('(')[-1].replace(')', '').strip().upper()
+                    
                     f_b64, f_name, f_type = None, "Không có", None
                     if up_file:
                         f_b64 = base64.b64encode(up_file.read()).decode()
@@ -82,9 +97,9 @@ else:
                     payload = {
                         "type": "send_dual", "date_sent": datetime.now().strftime("%d/%m/%Y %H:%M"),
                         "sender_name": st.session_state.user_name, "sender_id": st.session_state.id_code,
-                        "receiver_id": receiver, "doc_type": "Văn bản", "note": "", 
+                        "receiver_id": target_id, "doc_type": "Văn bản", "note": "", 
                         "content": msg, "file_name": f_name, "file_data": f_b64, "file_type": f_type
                     }
                     requests.post(WEB_APP_URL, json=payload)
-                    st.success("Đã gửi thành công!")
-                else: st.error("Thiếu thông tin!")
+                    st.success(f"✅ Đã gửi thành công tới {selected_receiver}!")
+                else: st.error("Vui lòng điền đủ thông tin!")
